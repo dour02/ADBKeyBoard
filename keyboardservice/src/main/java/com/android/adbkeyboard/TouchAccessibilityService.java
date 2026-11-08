@@ -10,6 +10,7 @@ import android.graphics.Path;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
 
 public class TouchAccessibilityService extends AccessibilityService {
@@ -22,6 +23,11 @@ public class TouchAccessibilityService extends AccessibilityService {
     public static final String ACTION_PINCH = "ADB_TOUCH_PINCH";
     public static final String ACTION_ZOOM = "ADB_TOUCH_ZOOM";
     public static final String ACTION_MOUSE_WHEEL = "ADB_MOUSE_WHEEL";
+
+    // 发送方必须持有这个权限：adb shell 和 root 默认持有，普通 App 拿不到。
+    // 否则手机上任何 App 发个广播就能借无障碍服务替你点屏幕。
+    // 如果要让 Tasker 之类的 App 也能调用，把它改成 null（会失去这层保护）。
+    private static final String SENDER_PERMISSION = "android.permission.DUMP";
 
     private BroadcastReceiver receiver;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -70,6 +76,15 @@ public class TouchAccessibilityService extends AccessibilityService {
         receiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
+                try {
+                    handle(intent);
+                } catch (Exception e) {
+                    // 坐标为负、时长超过系统上限等都会抛异常，不能让服务崩溃
+                    Log.w("AdbTouch", "bad gesture " + intent.getAction() + ": " + e);
+                }
+            }
+
+            private void handle(Intent intent) {
                 String action = intent.getAction();
                 if (action == null) {
                     return;
@@ -158,15 +173,19 @@ public class TouchAccessibilityService extends AccessibilityService {
         };
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
+            registerReceiver(receiver, filter, SENDER_PERMISSION, null, Context.RECEIVER_EXPORTED);
         } else {
-            registerReceiver(receiver, filter);
+            registerReceiver(receiver, filter, SENDER_PERMISSION, null);
         }
+    }
+
+    private static float c(float v) {
+        return Math.max(0f, v);
     }
 
     private void dispatchTap(float x, float y, long duration) {
         Path path = new Path();
-        path.moveTo(x, y);
+        path.moveTo(c(x), c(y));
 
         GestureDescription.Builder builder = new GestureDescription.Builder();
         builder.addStroke(new GestureDescription.StrokeDescription(path, 0, Math.max(1L, duration)));
@@ -175,10 +194,10 @@ public class TouchAccessibilityService extends AccessibilityService {
 
     private void dispatchDoubleTap(float x, float y, long tapDuration, long gap) {
         Path path1 = new Path();
-        path1.moveTo(x, y);
+        path1.moveTo(c(x), c(y));
 
         Path path2 = new Path();
-        path2.moveTo(x, y);
+        path2.moveTo(c(x), c(y));
 
         GestureDescription.Builder builder = new GestureDescription.Builder();
         builder.addStroke(new GestureDescription.StrokeDescription(path1, 0, Math.max(1L, tapDuration)));
@@ -192,8 +211,8 @@ public class TouchAccessibilityService extends AccessibilityService {
 
     private void dispatchSwipe(float x1, float y1, float x2, float y2, long duration) {
         Path path = new Path();
-        path.moveTo(x1, y1);
-        path.lineTo(x2, y2);
+        path.moveTo(c(x1), c(y1));
+        path.lineTo(c(x2), c(y2));
 
         GestureDescription.Builder builder = new GestureDescription.Builder();
         builder.addStroke(new GestureDescription.StrokeDescription(path, 0, Math.max(1L, duration)));
@@ -206,12 +225,12 @@ public class TouchAccessibilityService extends AccessibilityService {
             long duration
     ) {
         Path path1 = new Path();
-        path1.moveTo(x1s, y1s);
-        path1.lineTo(x1e, y1e);
+        path1.moveTo(c(x1s), c(y1s));
+        path1.lineTo(c(x1e), c(y1e));
 
         Path path2 = new Path();
-        path2.moveTo(x2s, y2s);
-        path2.lineTo(x2e, y2e);
+        path2.moveTo(c(x2s), c(y2s));
+        path2.lineTo(c(x2e), c(y2e));
 
         GestureDescription.Builder builder = new GestureDescription.Builder();
         builder.addStroke(new GestureDescription.StrokeDescription(path1, 0, Math.max(1L, duration)));
@@ -224,12 +243,12 @@ public class TouchAccessibilityService extends AccessibilityService {
         float endHalf = Math.max(20f, endDistance / 2f);
 
         Path path1 = new Path();
-        path1.moveTo(cx - startHalf, cy);
-        path1.lineTo(cx - endHalf, cy);
+        path1.moveTo(c(cx - startHalf), c(cy));
+        path1.lineTo(c(cx - endHalf), c(cy));
 
         Path path2 = new Path();
-        path2.moveTo(cx + startHalf, cy);
-        path2.lineTo(cx + endHalf, cy);
+        path2.moveTo(c(cx + startHalf), c(cy));
+        path2.lineTo(c(cx + endHalf), c(cy));
 
         GestureDescription.Builder builder = new GestureDescription.Builder();
         builder.addStroke(new GestureDescription.StrokeDescription(path1, 0, Math.max(1L, duration)));
@@ -256,7 +275,11 @@ public class TouchAccessibilityService extends AccessibilityService {
                     float y1 = y;
                     float x2 = x;
                     float y2 = scrollDown ? (y - distance) : (y + distance);
-                    dispatchSwipe(x1, y1, x2, y2, duration);
+                    try {
+                        dispatchSwipe(x1, y1, x2, y2, duration);
+                    } catch (Exception e) {
+                        Log.w("AdbTouch", "bad wheel gesture: " + e);
+                    }
                 }
             }, i * (duration + 40L));
         }

@@ -7,6 +7,7 @@ import android.content.IntentFilter;
 import android.inputmethodservice.InputMethodService;
 import android.os.Build;
 import android.util.Base64;
+import android.util.Log;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.View;
@@ -79,6 +80,18 @@ public class AdbIME extends InputMethodService {
     class AdbReceiver extends BroadcastReceiver {
         @Override
         public void onReceive(Context context, Intent intent) {
+            // 广播在主线程处理，参数格式错误抛出的异常会让整个输入法进程崩溃
+            try {
+                handle(intent);
+            } catch (Exception e) {
+                Log.w("AdbIME", "bad broadcast " + intent.getAction() + ": " + e);
+            }
+        }
+
+        private void handle(Intent intent) {
+            if (intent.getAction() == null) {
+                return;
+            }
             if (intent.getAction().equals(IME_MESSAGE)) {
                 String msg = intent.getStringExtra("msg");
                 if (msg != null) {
@@ -126,6 +139,7 @@ public class AdbIME extends InputMethodService {
                                     );
                                 }
                                 ic.sendKeyEvent(ke);
+                                ic.sendKeyEvent(KeyEvent.changeAction(ke, KeyEvent.ACTION_UP));
                             }
                         }
                     }
@@ -134,6 +148,9 @@ public class AdbIME extends InputMethodService {
 
             if (intent.getAction().equals(IME_MESSAGE_B64)) {
                 String data = intent.getStringExtra("msg");
+                if (data == null) {
+                    return;
+                }
                 byte[] b64 = Base64.decode(data, Base64.DEFAULT);
                 String msg = "NOT SUPPORTED";
                 try {
@@ -164,7 +181,9 @@ public class AdbIME extends InputMethodService {
                 if (code != -1) {
                     InputConnection ic = getCurrentInputConnection();
                     if (ic != null) {
+                        // 只发 DOWN 不发 UP，部分应用会认为按键一直按着（重复输入或无响应）
                         ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, code));
+                        ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, code));
                     }
                 }
             }

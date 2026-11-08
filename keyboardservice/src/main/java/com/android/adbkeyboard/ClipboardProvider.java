@@ -6,6 +6,8 @@ import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.net.Uri;
+import android.os.Binder;
+import android.os.Process;
 
 public class ClipboardProvider extends ContentProvider {
 
@@ -16,9 +18,21 @@ public class ClipboardProvider extends ContentProvider {
     public static final String KEY_TEXT = "text";
     public static final String KEY_UPDATED_AT = "updated_at";
 
+    private static final int ROOT_UID = 0;
+    private static final int SHELL_UID = 2000;
+
     @Override
     public boolean onCreate() {
         return true;
+    }
+
+    // provider 是 exported 的，不做限制的话手机上任何 App 都能读写这里缓存的剪贴板内容。
+    // 只放行 adb shell、root 和本应用自己。
+    private void enforceCaller() {
+        int uid = Binder.getCallingUid();
+        if (uid != ROOT_UID && uid != SHELL_UID && uid != Process.myUid()) {
+            throw new SecurityException("Only adb shell or root may access " + AUTHORITY);
+        }
     }
 
     @Override
@@ -41,6 +55,7 @@ public class ClipboardProvider extends ContentProvider {
             String[] selectionArgs,
             String sortOrder
     ) {
+        enforceCaller();
         if (uri == null) {
             throw new IllegalArgumentException("uri == null");
         }
@@ -74,6 +89,7 @@ public class ClipboardProvider extends ContentProvider {
 
     @Override
     public int delete(Uri uri, String selection, String[] selectionArgs) {
+        enforceCaller();
         if (uri == null) {
             throw new IllegalArgumentException("uri == null");
         }
@@ -93,6 +109,7 @@ public class ClipboardProvider extends ContentProvider {
 
     @Override
     public int update(Uri uri, ContentValues values, String selection, String[] selectionArgs) {
+        enforceCaller();
         if (uri == null) {
             throw new IllegalArgumentException("uri == null");
         }

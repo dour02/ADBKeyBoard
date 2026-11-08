@@ -1,7 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.android.adbkeyboard"
-    android:versionCode="1"
-    android:versionName="1.0">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application
         android:allowBackup="true"
@@ -26,8 +23,7 @@
         <provider
             android:name=".ClipboardProvider"
             android:authorities="com.android.adbkeyboard.clipboard"
-            android:exported="true"
-            android:grantUriPermissions="true" />
+            android:exported="true" />
 
         <activity
             android:name=".ClipboardSyncActivity"
@@ -41,6 +37,7 @@
 
         <service
             android:name=".TouchAccessibilityService"
+            android:label="@string/touch_service_name"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
             android:exported="true">
             <intent-filter>

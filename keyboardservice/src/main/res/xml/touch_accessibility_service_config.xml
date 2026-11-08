@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 服务只用来注入手势，不处理任何事件，所以只订阅一个低频事件类型，避免 typeAllMask 带来的无谓开销 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typeAllMask"
+    android:description="@string/touch_service_description"
+    android:accessibilityEventTypes="typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="false"
-    android:notificationTimeout="50"
+    android:notificationTimeout="100"
     android:accessibilityFlags="flagDefault" />

@@ -2,4 +2,6 @@
     <string name="app_name">ADBKeyBoard</string>
 	<string name="keyboard_name">ADB Keyboard</string>
 	<string name="keyboard_on">ADB Keyboard {ON}</string>
+	<string name="touch_service_name">ADB Touch</string>
+	<string name="touch_service_description">Lets adb shell send taps, swipes, pinch and scroll gestures via broadcasts. Only the shell (adb) or root can trigger it.</string>
 </resources>

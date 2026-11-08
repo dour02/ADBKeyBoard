@@ -15,42 +15,46 @@ public class ClipboardSyncActivity extends Activity {
     private boolean synced = false;
     private final Handler handler = new Handler(Looper.getMainLooper());
 
+    // Android 10+ 只有拿到窗口焦点的前台应用才能读剪贴板，
+    // 所以必须等 onWindowFocusChanged(true) 之后再读，不能在 onCreate/onResume 里提前读。
+    private static final long FOCUS_TIMEOUT_MS = 1500;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        setContentView(new View(this));
 
-        View view = new View(this);
-        setContentView(view);
-
-        view.post(new Runnable() {
+        // 兜底：一直拿不到焦点（比如锁屏）时也要退出，别让透明 Activity 挡在前台
+        handler.postDelayed(new Runnable() {
             @Override
             public void run() {
                 trySyncAndFinish();
             }
-        });
+        }, FOCUS_TIMEOUT_MS);
     }
 
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) {
-            trySyncAndFinish();
+            // 焦点刚到时剪贴板服务可能还没放行，稍等一帧
+            handler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    trySyncAndFinish();
+                }
+            }, 50);
         }
     }
 
     @Override
-    protected void onResume() {
-        super.onResume();
-        handler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                trySyncAndFinish();
-            }
-        }, 120);
+    protected void onDestroy() {
+        handler.removeCallbacksAndMessages(null);
+        super.onDestroy();
     }
 
     private void trySyncAndFinish() {
-        if (synced) {
+        if (synced || isFinishing()) {
             return;
         }
         synced = true;
@@ -62,7 +66,7 @@ public class ClipboardSyncActivity extends Activity {
         sp.edit()
                 .putString(ClipboardProvider.KEY_TEXT, text == null ? "" : text)
                 .putLong(ClipboardProvider.KEY_UPDATED_AT, System.currentTimeMillis())
-                .apply();
+                .commit();   // commit：进程马上可能被回收，要保证写入落盘
 
         finish();
         overridePendingTransition(0, 0);
