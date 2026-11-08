@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.inputmethodservice.InputMethodService;
 import android.os.Build;
+import android.os.IBinder;
 import android.util.Base64;
 import android.util.Log;
 import android.view.InputDevice;
@@ -14,6 +15,7 @@ import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.ExtractedTextRequest;
 import android.view.inputmethod.InputConnection;
+import android.view.inputmethod.InputMethodManager;
 
 public class AdbIME extends InputMethodService {
 
@@ -65,7 +67,47 @@ public class AdbIME extends InputMethodService {
 
     @Override
     public View onCreateInputView() {
-        return getLayoutInflater().inflate(R.layout.view, null);
+        View view = getLayoutInflater().inflate(R.layout.view, null);
+        View switchBtn = view.findViewById(R.id.switch_ime);
+        if (switchBtn != null) {
+            // 点击：弹出系统输入法选择框
+            switchBtn.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    InputMethodManager imm =
+                            (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+                    if (imm != null) {
+                        imm.showInputMethodPicker();
+                    }
+                }
+            });
+            // 长按：直接切到下一个输入法
+            switchBtn.setOnLongClickListener(new View.OnLongClickListener() {
+                @Override
+                public boolean onLongClick(View v) {
+                    switchToNextIme();
+                    return true;
+                }
+            });
+        }
+        return view;
+    }
+
+    private void switchToNextIme() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                switchToNextInputMethod(false);
+            } else {
+                InputMethodManager imm =
+                        (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+                if (imm != null && getWindow() != null && getWindow().getWindow() != null) {
+                    IBinder token = getWindow().getWindow().getAttributes().token;
+                    imm.switchToNextInputMethod(token, false);
+                }
+            }
+        } catch (Exception e) {
+            Log.w("AdbIME", "switch ime failed: " + e);
+        }
     }
 
     @Override
