@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 服务只用来注入手势，不处理任何事件，所以只订阅一个低频事件类型，避免 typeAllMask 带来的无谓开销 -->
+<!-- typeWindowStateChanged：手势注入用不到事件，保留一个低频类型即可
+     typeNotificationStateChanged：toast 监听需要（toast 以通知状态变化事件送达） -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/touch_service_description"
-    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeNotificationStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="false"

@@ -2,6 +2,7 @@ package com.android.adbkeyboard;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
+import android.app.Notification;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -9,9 +10,21 @@ import android.content.IntentFilter;
 import android.graphics.Path;
 import android.os.Build;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.Looper;
+import android.os.Parcelable;
 import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
+import java.nio.charset.Charset;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.List;
+import java.util.Locale;
 
 public class TouchAccessibilityService extends AccessibilityService {
 
@@ -29,13 +42,30 @@ public class TouchAccessibilityService extends AccessibilityService {
     // 如果要让 Tasker 之类的 App 也能调用，把它改成 null（会失去这层保护）。
     private static final String SENDER_PERMISSION = "android.permission.DUMP";
 
+    // toast 日志写在应用私有目录：/data/data/com.android.adbkeyboard/files/toast.log
+    // 其他 App 读不到；adb 读取需要 root（su）或 run-as（仅 debug 包）
+    private static final String TOAST_LOG_NAME = "toast.log";
+    private static final long TOAST_LOG_MAX_BYTES = 2 * 1024 * 1024; // 超过 2MB 自动截断
+
     private BroadcastReceiver receiver;
     private final Handler handler = new Handler(Looper.getMainLooper());
+
+    // 文件写入放到独立线程，不占用无障碍事件的主线程
+    private File toastLogFile;
+    private HandlerThread logThread;
+    private Handler logHandler;
+    private final SimpleDateFormat tsFormat =
+            new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US);
 
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
         registerTouchReceiver();
+
+        toastLogFile = new File(getFilesDir(), TOAST_LOG_NAME);
+        logThread = new HandlerThread("toast-log");
+        logThread.start();
+        logHandler = new Handler(logThread.getLooper());
     }
 
     @Override
@@ -47,11 +77,86 @@ public class TouchAccessibilityService extends AccessibilityService {
             }
             receiver = null;
         }
+        if (logThread != null) {
+            logThread.quitSafely();
+            logThread = null;
+            logHandler = null;
+        }
         super.onDestroy();
     }
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
+        if (event == null
+                || event.getEventType() != AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
+            return;
+        }
+
+        // 通知和 toast 都走这个事件类型。通知的 parcelable 是 Notification，
+        // toast 没有 Notification，用这个区分，只记录 toast。
+        Parcelable data = event.getParcelableData();
+        if (data instanceof Notification) {
+            return;
+        }
+
+        final String pkg = event.getPackageName() == null
+                ? "?" : event.getPackageName().toString();
+        final String text = joinText(event.getText());
+        if (text.isEmpty()) {
+            return;
+        }
+
+        final String line = tsFormat.format(new Date()) + "\t" + pkg + "\t" + text + "\n";
+        Handler h = logHandler;
+        if (h != null) {
+            h.post(new Runnable() {
+                @Override
+                public void run() {
+                    appendLog(line);
+                }
+            });
+        }
+    }
+
+    private String joinText(List<CharSequence> parts) {
+        if (parts == null || parts.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (CharSequence cs : parts) {
+            if (cs == null) {
+                continue;
+            }
+            if (sb.length() > 0) {
+                sb.append(' ');
+            }
+            sb.append(cs);
+        }
+        // toast 内容可能带换行/制表符，压成一行，保证一条 toast 一行
+        return sb.toString().replace('\n', ' ').replace('\r', ' ').replace('\t', ' ').trim();
+    }
+
+    private void appendLog(String line) {
+        try {
+            File f = toastLogFile;
+            if (f == null) {
+                return;
+            }
+            if (f.exists() && f.length() > TOAST_LOG_MAX_BYTES) {
+                // 简单滚动：超限就清空重来，避免无限增长
+                f.delete();
+            }
+            Writer w = new OutputStreamWriter(
+                    new FileOutputStream(f, true), Charset.forName("UTF-8"));
+            try {
+                w.write(line);
+                w.flush();
+            } finally {
+                w.close();
+            }
+        } catch (Throwable e) {
+            Log.w("AdbToast", "write toast log failed: " + e);
+        }
     }
 
     @Override
