@@ -3,7 +3,7 @@ name: Android CI
 on:
   push:
     branches: [ master ]
-    tags: [ 'v*' ]          # 推送 v 开头的 tag（如 v2.1）时自动发 Release
+    tags: [ 'v*' ]          # 推送 v 开头的 tag（如 v2.2）时自动发 Release
   pull_request:
     branches: [ master ]
   workflow_dispatch:        # 允许在 Actions 页面手动运行
@@ -37,7 +37,7 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             echo "VERSION_NAME=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
           else
-            echo "VERSION_NAME=2.1-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+            echo "VERSION_NAME=2.2-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
           fi
       # 没有配置签名 Secrets 时这一步跳过，只产出 debug 包
       - name: Decode keystore
