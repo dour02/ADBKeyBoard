@@ -4,8 +4,8 @@ apply plugin: 'com.android.application'
 def ksFile = System.getenv('SIGNING_STORE_FILE')
 def hasSigning = ksFile != null && file(ksFile).exists()
 
-def configuredVersionCode = (System.getenv('VERSION_CODE') ?: '3') as int
-def effectiveVersionCode = Math.max(3, configuredVersionCode)
+def configuredVersionCode = (System.getenv('VERSION_CODE') ?: '4') as int
+def effectiveVersionCode = Math.max(4, configuredVersionCode)
 
 android {
     namespace 'com.android.adbkeyboard'
@@ -16,7 +16,7 @@ android {
         targetSdk 33
         // 最低版本码提升到 3；CI 可继续使用更大的 GitHub Actions run_number。
         versionCode effectiveVersionCode
-        versionName System.getenv('VERSION_NAME') ?: '2.1'
+        versionName System.getenv('VERSION_NAME') ?: '2.2'
     }
     signingConfigs {
         if (hasSigning) {
