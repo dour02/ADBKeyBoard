@@ -1,0 +1,176 @@
+--- a/keyboardservice/src/main/java/com/android/adbkeyboard/TouchAccessibilityService.java
++++ b/keyboardservice/src/main/java/com/android/adbkeyboard/TouchAccessibilityService.java
+@@ -1,16 +1,19 @@
+ package com.android.adbkeyboard;
+ import android.accessibilityservice.AccessibilityService;
+ import android.accessibilityservice.GestureDescription;
+ import android.app.Notification;
+ import android.content.BroadcastReceiver;
++import android.content.ClipData;
++import android.content.ClipboardManager;
+ import android.content.Context;
+ import android.content.Intent;
+ import android.content.IntentFilter;
+ import android.graphics.Path;
+ import android.os.Build;
+ import android.os.Handler;
+ import android.os.HandlerThread;
+ import android.os.Looper;
+ import android.os.Parcelable;
+ import android.util.Log;
+ import android.view.accessibility.AccessibilityEvent;
++import android.view.accessibility.AccessibilityNodeInfo;
+@@ -26,10 +29,14 @@
+ public class TouchAccessibilityService extends AccessibilityService {
+     public static final String ACTION_TAP = "ADB_TOUCH_TAP";
+     public static final String ACTION_DOUBLE_TAP = "ADB_TOUCH_DOUBLE_TAP";
+     public static final String ACTION_LONG_PRESS = "ADB_TOUCH_LONG_PRESS";
+     public static final String ACTION_SWIPE = "ADB_TOUCH_SWIPE";
+     public static final String ACTION_TWO_FINGER_SWIPE = "ADB_TOUCH_SWIPE2";
+     public static final String ACTION_PINCH = "ADB_TOUCH_PINCH";
+     public static final String ACTION_ZOOM = "ADB_TOUCH_ZOOM";
+     public static final String ACTION_MOUSE_WHEEL = "ADB_MOUSE_WHEEL";
++    // Copy accessible text from the active window; no focused editor is required.
++    public static final String ACTION_SELECT_ALL_COPY = "ADB_SELECT_ALL_COPY";
++    private static final int COPY_MAX_NODES = 4096;
++    private static final int COPY_MAX_CHARS = 524288;
+     // 发送方必须持有这个权限：adb shell 和 root 默认持有，普通 App 拿不到。
+@@ -156,4 +159,5 @@
+         filter.addAction(ACTION_PINCH);
+         filter.addAction(ACTION_ZOOM);
+         filter.addAction(ACTION_MOUSE_WHEEL);
++        filter.addAction(ACTION_SELECT_ALL_COPY);
+         receiver = new BroadcastReceiver() {
+@@ -243,6 +247,10 @@
+                     long duration = getLongExtra(intent, "duration", 140L);
+                     dispatchMouseWheel(x, y, delta, steps, duration);
++                    return;
+                 }
++                if (ACTION_SELECT_ALL_COPY.equals(action)) {
++                    copyActiveWindowText();
++                    return;
+                 }
+             }
+         };
+@@ -259,3 +268,120 @@
+-    private static float c(float v) {
++    /**
++     * Copy all text exposed by the active window's AccessibilityNodeInfo tree.
++     * This is intentionally independent of InputConnection and the focused editor.
++     * Android has no universal API that visually selects every widget in every app;
++     * this action copies the text the app exposes to accessibility services.
++     */
++    private void copyActiveWindowText() {
++        AccessibilityNodeInfo root = null;
++        try {
++            root = getRootInActiveWindow();
++            if (root == null) {
++                Log.w("AdbTouch", "ADB_SELECT_ALL_COPY: active window has no accessibility root");
++                return;
++            }
++
++            StringBuilder text = new StringBuilder();
++            int[] visited = new int[] {0};
++            collectAccessibleText(root, text, visited, 0);
++
++            String result = text.toString().trim();
++            if (result.isEmpty()) {
++                Log.w("AdbTouch", "ADB_SELECT_ALL_COPY: no accessible text in active window");
++                return;
++            }
++
++            ClipboardManager clipboard =
++                    (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
++            if (clipboard == null) {
++                Log.e("AdbTouch", "ADB_SELECT_ALL_COPY: ClipboardManager unavailable");
++                return;
++            }
++            clipboard.setPrimaryClip(ClipData.newPlainText("ADBKeyBoard", result));
++            Log.i("AdbTouch", "ADB_SELECT_ALL_COPY: copied " + result.length()
++                    + " chars from " + visited[0] + " accessibility nodes");
++        } catch (Throwable e) {
++            Log.e("AdbTouch", "ADB_SELECT_ALL_COPY failed", e);
++        } finally {
++            if (root != null) {
++                try {
++                    root.recycle();
++                } catch (Throwable ignored) {
++                }
++            }
++        }
++    }
++
++    private void collectAccessibleText(
++            AccessibilityNodeInfo node,
++            StringBuilder out,
++            int[] visited,
++            int depth
++    ) {
++        if (node == null || visited[0] >= COPY_MAX_NODES
++                || depth > 80 || out.length() >= COPY_MAX_CHARS) {
++            return;
++        }
++        visited[0]++;
++
++        if (node.isVisibleToUser() && !node.isPassword()) {
++            CharSequence nodeText = node.getText();
++            CharSequence description = node.getContentDescription();
++            appendAccessibleText(nodeText, out);
++            if (description != null
++                    && (nodeText == null || !description.toString().contentEquals(nodeText))) {
++                appendAccessibleText(description, out);
++            }
++        }
++
++        int childCount = node.getChildCount();
++        for (int i = 0; i < childCount; i++) {
++            if (visited[0] >= COPY_MAX_NODES || out.length() >= COPY_MAX_CHARS) {
++                break;
++            }
++            AccessibilityNodeInfo child = null;
++            try {
++                child = node.getChild(i);
++                if (child != null) {
++                    collectAccessibleText(child, out, visited, depth + 1);
++                }
++            } catch (Throwable e) {
++                Log.w("AdbTouch", "Unable to read accessibility child", e);
++            } finally {
++                if (child != null) {
++                    try {
++                        child.recycle();
++                    } catch (Throwable ignored) {
++                    }
++                }
++            }
++        }
++    }
++
++    private void appendAccessibleText(CharSequence value, StringBuilder out) {
++        if (value == null || out.length() >= COPY_MAX_CHARS) {
++            return;
++        }
++        String item = value.toString().replace('\u0000', ' ').trim();
++        if (item.isEmpty()) {
++            return;
++        }
++
++        // Avoid adding the same value twice when a parent and child expose it.
++        if (out.length() >= item.length()
++                && out.substring(out.length() - item.length()).equals(item)) {
++            return;
++        }
++
++        if (out.length() > 0) {
++            out.append('\n');
++        }
++        int remaining = COPY_MAX_CHARS - out.length();
++        if (item.length() > remaining) {
++            item = item.substring(0, remaining);
++        }
++        out.append(item);
++    }
++
++    private static float c(float v) {
+         return Math.max(0f, v);
+     }
