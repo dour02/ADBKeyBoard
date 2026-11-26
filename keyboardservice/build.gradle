@@ -4,19 +4,20 @@ apply plugin: 'com.android.application'
 def ksFile = System.getenv('SIGNING_STORE_FILE')
 def hasSigning = ksFile != null && file(ksFile).exists()
 
+def configuredVersionCode = (System.getenv('VERSION_CODE') ?: '3') as int
+def effectiveVersionCode = Math.max(3, configuredVersionCode)
+
 android {
     namespace 'com.android.adbkeyboard'
     compileSdk 33
-
     defaultConfig {
         applicationId 'com.android.adbkeyboard'
         minSdk 24          // dispatchGesture 需要 API 24
         targetSdk 33
-        // CI 里用运行序号做 versionCode，保证每次构建都能覆盖安装
-        versionCode((System.getenv('VERSION_CODE') ?: '2') as int)
-        versionName System.getenv('VERSION_NAME') ?: '2.0'
+        // 最低版本码提升到 3；CI 可继续使用更大的 GitHub Actions run_number。
+        versionCode effectiveVersionCode
+        versionName System.getenv('VERSION_NAME') ?: '2.1'
     }
-
     signingConfigs {
         if (hasSigning) {
             release {
@@ -29,10 +30,8 @@ android {
             }
         }
     }
-
     buildTypes {
-        // CI 每次都会生成新的随机 debug 签名，导致新包无法覆盖安装旧包；
-        // 配了正式签名后 debug 包也用同一把 key
+        // 配了正式签名后 debug 包也用同一把 key，便于覆盖安装。
         debug {
             if (hasSigning) {
                 signingConfig signingConfigs.release
@@ -45,7 +44,6 @@ android {
             }
         }
     }
-
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
