@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- typeWindowStateChanged：手势注入用不到事件，保留一个低频类型即可
-     typeNotificationStateChanged：toast 监听需要（toast 以通知状态变化事件送达） -->
+<!-- Gesture injection and Toast logging are retained. Window text is read only
+     when ADB_SELECT_ALL_COPY is explicitly requested by adb/root. -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/touch_service_description"
     android:accessibilityEventTypes="typeWindowStateChanged|typeNotificationStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:canPerformGestures="true"
-    android:canRetrieveWindowContent="false"
+    android:canRetrieveWindowContent="true"
     android:notificationTimeout="100"
-    android:accessibilityFlags="flagDefault" />
+    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows" />
