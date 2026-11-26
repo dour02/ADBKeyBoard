@@ -37,7 +37,6 @@ public class AdbIME extends InputMethodService {
     private static final String IME_ACTION_SEND = "ADB_ACTION_SEND";
     private static final String IME_SELECT_ALL = "ADB_SELECT_ALL";
     private static final String IME_COPY = "ADB_COPY";
-    private static final String IME_SELECT_ALL_COPY = "ADB_SELECT_ALL_COPY";
 
     // adb shell 持有 DUMP 权限；普通第三方 App 通常不持有，避免任意应用向输入框注入内容。
     private static final String SENDER_PERMISSION = "android.permission.DUMP";
@@ -69,7 +68,6 @@ public class AdbIME extends InputMethodService {
         filter.addAction(IME_ACTION_SEND);
         filter.addAction(IME_SELECT_ALL);
         filter.addAction(IME_COPY);
-        filter.addAction(IME_SELECT_ALL_COPY);
 
         mReceiver = new AdbReceiver();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -330,15 +328,6 @@ public class AdbIME extends InputMethodService {
                 return;
             }
 
-            if (IME_SELECT_ALL_COPY.equals(action)) {
-                ic = getCurrentInputConnection();
-                if (ic != null) {
-                    // InputConnection 调用按顺序同步发给目标编辑器，先选中，再复制。
-                    performSelectAll(ic);
-                    performCopy(ic);
-                }
-                return;
-            }
 
             if (IME_ACTION_SEARCH.equals(action)) {
                 performEditorAction(EditorInfo.IME_ACTION_SEARCH);
