@@ -7,32 +7,43 @@ import android.content.IntentFilter;
 import android.inputmethodservice.InputMethodService;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Base64;
 import android.util.Log;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
-import android.view.inputmethod.ExtractedTextRequest;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
 
+import android.os.Handler;
+import java.nio.charset.StandardCharsets;
+
 public class AdbIME extends InputMethodService {
+    private static final String TAG = "AdbIME";
 
-    private String IME_MESSAGE = "ADB_INPUT_TEXT";
-    private String IME_CHARS = "ADB_INPUT_CHARS";
-    private String IME_KEYCODE = "ADB_INPUT_CODE";
-    private String IME_META_KEYCODE = "ADB_INPUT_MCODE";
-    private String IME_EDITORCODE = "ADB_EDITOR_CODE";
-    private String IME_MESSAGE_B64 = "ADB_INPUT_B64";
-    private String IME_CLEAR_TEXT = "ADB_CLEAR_TEXT";
-    private String IME_ACTION_SEARCH = "ADB_ACTION_SEARCH";
-    private String IME_ACTION_GO = "ADB_ACTION_GO";
-    private String IME_ACTION_DONE = "ADB_ACTION_DONE";
-    private String IME_ACTION_NEXT = "ADB_ACTION_NEXT";
-    private String IME_ACTION_SEND = "ADB_ACTION_SEND";
+    private static final String IME_MESSAGE = "ADB_INPUT_TEXT";
+    private static final String IME_CHARS = "ADB_INPUT_CHARS";
+    private static final String IME_KEYCODE = "ADB_INPUT_CODE";
+    private static final String IME_EDITORCODE = "ADB_EDITOR_CODE";
+    private static final String IME_MESSAGE_B64 = "ADB_INPUT_B64";
+    private static final String IME_CLEAR_TEXT = "ADB_CLEAR_TEXT";
+    private static final String IME_ACTION_SEARCH = "ADB_ACTION_SEARCH";
+    private static final String IME_ACTION_GO = "ADB_ACTION_GO";
+    private static final String IME_ACTION_DONE = "ADB_ACTION_DONE";
+    private static final String IME_ACTION_NEXT = "ADB_ACTION_NEXT";
+    private static final String IME_ACTION_SEND = "ADB_ACTION_SEND";
+    private static final String IME_SELECT_ALL = "ADB_SELECT_ALL";
+    private static final String IME_COPY = "ADB_COPY";
+    private static final String IME_SELECT_ALL_COPY = "ADB_SELECT_ALL_COPY";
 
-    private BroadcastReceiver mReceiver = null;
+    // adb shell 持有 DUMP 权限；普通第三方 App 通常不持有，避免任意应用向输入框注入内容。
+    private static final String SENDER_PERMISSION = "android.permission.DUMP";
+
+    private BroadcastReceiver mReceiver;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     @Override
     public void onCreate() {
@@ -44,10 +55,10 @@ public class AdbIME extends InputMethodService {
         if (mReceiver != null) {
             return;
         }
+
         IntentFilter filter = new IntentFilter(IME_MESSAGE);
         filter.addAction(IME_CHARS);
         filter.addAction(IME_KEYCODE);
-        filter.addAction(IME_MESSAGE);
         filter.addAction(IME_EDITORCODE);
         filter.addAction(IME_MESSAGE_B64);
         filter.addAction(IME_CLEAR_TEXT);
@@ -56,12 +67,21 @@ public class AdbIME extends InputMethodService {
         filter.addAction(IME_ACTION_DONE);
         filter.addAction(IME_ACTION_NEXT);
         filter.addAction(IME_ACTION_SEND);
+        filter.addAction(IME_SELECT_ALL);
+        filter.addAction(IME_COPY);
+        filter.addAction(IME_SELECT_ALL_COPY);
 
         mReceiver = new AdbReceiver();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(mReceiver, filter, Context.RECEIVER_EXPORTED);
+            registerReceiver(
+                    mReceiver,
+                    filter,
+                    SENDER_PERMISSION,
+                    null,
+                    Context.RECEIVER_EXPORTED
+            );
         } else {
-            registerReceiver(mReceiver, filter);
+            registerReceiver(mReceiver, filter, SENDER_PERMISSION, null);
         }
     }
 
@@ -70,7 +90,6 @@ public class AdbIME extends InputMethodService {
         View view = getLayoutInflater().inflate(R.layout.view, null);
         View switchBtn = view.findViewById(R.id.switch_ime);
         if (switchBtn != null) {
-            // 点击：弹出系统输入法选择框
             switchBtn.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
@@ -81,7 +100,6 @@ public class AdbIME extends InputMethodService {
                     }
                 }
             });
-            // 长按：直接切到下一个输入法
             switchBtn.setOnLongClickListener(new View.OnLongClickListener() {
                 @Override
                 public boolean onLongClick(View v) {
@@ -106,193 +124,247 @@ public class AdbIME extends InputMethodService {
                 }
             }
         } catch (Exception e) {
-            Log.w("AdbIME", "switch ime failed: " + e);
+            Log.w(TAG, "switch ime failed", e);
         }
     }
 
     @Override
     public void onDestroy() {
         if (mReceiver != null) {
-            unregisterReceiver(mReceiver);
+            try {
+                unregisterReceiver(mReceiver);
+            } catch (IllegalArgumentException ignored) {
+                // Receiver may already have been unregistered during service teardown.
+            }
             mReceiver = null;
         }
+        mainHandler.removeCallbacksAndMessages(null);
         super.onDestroy();
+    }
+
+    private void sendKeyEventPair(InputConnection ic, int keyCode, int metaState) {
+        if (ic == null) {
+            return;
+        }
+
+        long downTime = SystemClock.uptimeMillis();
+        KeyEvent down = new KeyEvent(
+                downTime,
+                downTime,
+                KeyEvent.ACTION_DOWN,
+                keyCode,
+                0,
+                metaState,
+                0,
+                0,
+                KeyEvent.FLAG_SOFT_KEYBOARD | KeyEvent.FLAG_KEEP_TOUCH_MODE,
+                InputDevice.SOURCE_KEYBOARD
+        );
+        ic.sendKeyEvent(down);
+
+        long upTime = Math.max(downTime, SystemClock.uptimeMillis());
+        KeyEvent up = new KeyEvent(
+                downTime,
+                upTime,
+                KeyEvent.ACTION_UP,
+                keyCode,
+                0,
+                metaState,
+                0,
+                0,
+                KeyEvent.FLAG_SOFT_KEYBOARD | KeyEvent.FLAG_KEEP_TOUCH_MODE,
+                InputDevice.SOURCE_KEYBOARD
+        );
+        ic.sendKeyEvent(up);
+    }
+
+    private int parseMetaState(String value) {
+        int metaState = 0;
+        String[] parts = value.split("\\+");
+        for (String part : parts) {
+            String token = part.trim();
+            if (!token.isEmpty()) {
+                metaState |= Integer.parseInt(token);
+            }
+        }
+        return metaState;
+    }
+
+    private void sendMetaCodeSequence(InputConnection ic, String metaCodes) {
+        String[] entries = metaCodes.split(",");
+        if ((entries.length & 1) != 0) {
+            Log.w(TAG, "Ignoring unmatched trailing item in mcode: " + metaCodes);
+        }
+        for (int i = 0; i + 1 < entries.length; i += 2) {
+            int metaState = parseMetaState(entries[i].trim());
+            int keyCode = Integer.parseInt(entries[i + 1].trim());
+            sendKeyEventPair(ic, keyCode, metaState);
+        }
+    }
+
+    private boolean performSelectAll(InputConnection ic) {
+        if (ic == null) {
+            return false;
+        }
+        boolean handled = ic.performContextMenuAction(android.R.id.selectAll);
+        if (!handled) {
+            // 某些编辑器不实现 context-menu action，回退到 Ctrl+A。
+            sendKeyEventPair(ic, KeyEvent.KEYCODE_A, KeyEvent.META_CTRL_ON);
+        }
+        return handled;
+    }
+
+    private boolean performCopy(InputConnection ic) {
+        if (ic == null) {
+            return false;
+        }
+        boolean handled = ic.performContextMenuAction(android.R.id.copy);
+        if (!handled) {
+            sendKeyEventPair(ic, KeyEvent.KEYCODE_C, KeyEvent.META_CTRL_ON);
+        }
+        return handled;
+    }
+
+    private void clearInputText(InputConnection ic) {
+        if (ic == null) {
+            return;
+        }
+        // 先使用编辑器原生的“全选”，失败时 performSelectAll 会回退到 Ctrl+A。
+        performSelectAll(ic);
+        ic.commitText("", 1);
     }
 
     class AdbReceiver extends BroadcastReceiver {
         @Override
         public void onReceive(Context context, Intent intent) {
-            // 广播在主线程处理，参数格式错误抛出的异常会让整个输入法进程崩溃
+            if (intent == null || intent.getAction() == null) {
+                return;
+            }
             try {
                 handle(intent);
             } catch (Exception e) {
-                Log.w("AdbIME", "bad broadcast " + intent.getAction() + ": " + e);
+                // 错误参数或编辑器异常不应导致输入法进程退出。
+                Log.w(TAG, "Failed to handle broadcast " + intent.getAction(), e);
             }
         }
 
         private void handle(Intent intent) {
-            if (intent.getAction() == null) {
-                return;
-            }
-            if (intent.getAction().equals(IME_MESSAGE)) {
+            String action = intent.getAction();
+            InputConnection ic;
+
+            if (IME_MESSAGE.equals(action)) {
                 String msg = intent.getStringExtra("msg");
                 if (msg != null) {
-                    InputConnection ic = getCurrentInputConnection();
+                    ic = getCurrentInputConnection();
                     if (ic != null) {
                         ic.commitText(msg, 1);
                     }
                 }
-
                 String metaCodes = intent.getStringExtra("mcode");
                 if (metaCodes != null) {
-                    String[] mcodes = metaCodes.split(",");
-                    if (mcodes != null) {
-                        int i;
-                        InputConnection ic = getCurrentInputConnection();
-                        for (i = 0; i < mcodes.length - 1; i = i + 2) {
-                            if (ic != null) {
-                                KeyEvent ke;
-                                if (mcodes[i].contains("+")) {
-                                    String[] arrCode = mcodes[i].split("\\+");
-                                    ke = new KeyEvent(
-                                            0,
-                                            0,
-                                            KeyEvent.ACTION_DOWN,
-                                            Integer.parseInt(mcodes[i + 1]),
-                                            0,
-                                            Integer.parseInt(arrCode[0]) | Integer.parseInt(arrCode[1]),
-                                            0,
-                                            0,
-                                            KeyEvent.FLAG_SOFT_KEYBOARD | KeyEvent.FLAG_KEEP_TOUCH_MODE,
-                                            InputDevice.SOURCE_KEYBOARD
-                                    );
-                                } else {
-                                    ke = new KeyEvent(
-                                            0,
-                                            0,
-                                            KeyEvent.ACTION_DOWN,
-                                            Integer.parseInt(mcodes[i + 1]),
-                                            0,
-                                            Integer.parseInt(mcodes[i]),
-                                            0,
-                                            0,
-                                            KeyEvent.FLAG_SOFT_KEYBOARD | KeyEvent.FLAG_KEEP_TOUCH_MODE,
-                                            InputDevice.SOURCE_KEYBOARD
-                                    );
-                                }
-                                ic.sendKeyEvent(ke);
-                                ic.sendKeyEvent(KeyEvent.changeAction(ke, KeyEvent.ACTION_UP));
-                            }
-                        }
+                    ic = getCurrentInputConnection();
+                    if (ic != null) {
+                        sendMetaCodeSequence(ic, metaCodes);
                     }
                 }
+                return;
             }
 
-            if (intent.getAction().equals(IME_MESSAGE_B64)) {
+            if (IME_MESSAGE_B64.equals(action)) {
                 String data = intent.getStringExtra("msg");
                 if (data == null) {
                     return;
                 }
-                byte[] b64 = Base64.decode(data, Base64.DEFAULT);
-                String msg = "NOT SUPPORTED";
-                try {
-                    msg = new String(b64, "UTF-8");
-                } catch (Exception ignored) {
+                byte[] decoded = Base64.decode(data, Base64.DEFAULT);
+                String msg = new String(decoded, StandardCharsets.UTF_8);
+                ic = getCurrentInputConnection();
+                if (ic != null) {
+                    ic.commitText(msg, 1);
                 }
-                if (msg != null) {
-                    InputConnection ic = getCurrentInputConnection();
-                    if (ic != null) {
-                        ic.commitText(msg, 1);
-                    }
-                }
+                return;
             }
 
-            if (intent.getAction().equals(IME_CHARS)) {
+            if (IME_CHARS.equals(action)) {
                 int[] chars = intent.getIntArrayExtra("chars");
                 if (chars != null) {
                     String msg = new String(chars, 0, chars.length);
-                    InputConnection ic = getCurrentInputConnection();
+                    ic = getCurrentInputConnection();
                     if (ic != null) {
                         ic.commitText(msg, 1);
                     }
                 }
+                return;
             }
 
-            if (intent.getAction().equals(IME_KEYCODE)) {
+            if (IME_KEYCODE.equals(action)) {
                 int code = intent.getIntExtra("code", -1);
                 if (code != -1) {
-                    InputConnection ic = getCurrentInputConnection();
-                    if (ic != null) {
-                        // 只发 DOWN 不发 UP，部分应用会认为按键一直按着（重复输入或无响应）
-                        ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, code));
-                        ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, code));
-                    }
+                    sendKeyEventPair(getCurrentInputConnection(), code, 0);
                 }
+                return;
             }
 
-            if (intent.getAction().equals(IME_EDITORCODE)) {
+            if (IME_EDITORCODE.equals(action)) {
                 int code = intent.getIntExtra("code", -1);
                 if (code != -1) {
-                    InputConnection ic = getCurrentInputConnection();
+                    ic = getCurrentInputConnection();
                     if (ic != null) {
                         ic.performEditorAction(code);
                     }
                 }
+                return;
             }
 
-            if (intent.getAction().equals(IME_CLEAR_TEXT)) {
-                InputConnection ic = getCurrentInputConnection();
-                if (ic != null) {
-                    ExtractedTextRequest req = new ExtractedTextRequest();
-                    req.hintMaxChars = 100000;
-                    req.hintMaxLines = 10000;
-                    android.view.inputmethod.ExtractedText et = ic.getExtractedText(req, 0);
-                    if (et != null && et.text != null) {
-                        CharSequence beforePos = ic.getTextBeforeCursor(et.text.length(), 0);
-                        CharSequence afterPos = ic.getTextAfterCursor(et.text.length(), 0);
-                        if (beforePos != null && afterPos != null) {
-                            ic.deleteSurroundingText(beforePos.length(), afterPos.length());
-                        }
-                    } else {
-                        ic.performContextMenuAction(android.R.id.selectAll);
-                        ic.commitText("", 1);
-                    }
-                }
+            if (IME_CLEAR_TEXT.equals(action)) {
+                clearInputText(getCurrentInputConnection());
+                return;
             }
 
-            if (intent.getAction().equals(IME_ACTION_SEARCH)) {
-                InputConnection ic = getCurrentInputConnection();
-                if (ic != null) {
-                    ic.performEditorAction(EditorInfo.IME_ACTION_SEARCH);
-                }
+            if (IME_SELECT_ALL.equals(action)) {
+                performSelectAll(getCurrentInputConnection());
+                return;
             }
 
-            if (intent.getAction().equals(IME_ACTION_GO)) {
-                InputConnection ic = getCurrentInputConnection();
-                if (ic != null) {
-                    ic.performEditorAction(EditorInfo.IME_ACTION_GO);
-                }
+            if (IME_COPY.equals(action)) {
+                performCopy(getCurrentInputConnection());
+                return;
             }
 
-            if (intent.getAction().equals(IME_ACTION_DONE)) {
-                InputConnection ic = getCurrentInputConnection();
+            if (IME_SELECT_ALL_COPY.equals(action)) {
+                ic = getCurrentInputConnection();
                 if (ic != null) {
-                    ic.performEditorAction(EditorInfo.IME_ACTION_DONE);
+                    // InputConnection 调用按顺序同步发给目标编辑器，先选中，再复制。
+                    performSelectAll(ic);
+                    performCopy(ic);
                 }
+                return;
             }
 
-            if (intent.getAction().equals(IME_ACTION_NEXT)) {
-                InputConnection ic = getCurrentInputConnection();
-                if (ic != null) {
-                    ic.performEditorAction(EditorInfo.IME_ACTION_NEXT);
-                }
+            if (IME_ACTION_SEARCH.equals(action)) {
+                performEditorAction(EditorInfo.IME_ACTION_SEARCH);
+                return;
             }
+            if (IME_ACTION_GO.equals(action)) {
+                performEditorAction(EditorInfo.IME_ACTION_GO);
+                return;
+            }
+            if (IME_ACTION_DONE.equals(action)) {
+                performEditorAction(EditorInfo.IME_ACTION_DONE);
+                return;
+            }
+            if (IME_ACTION_NEXT.equals(action)) {
+                performEditorAction(EditorInfo.IME_ACTION_NEXT);
+                return;
+            }
+            if (IME_ACTION_SEND.equals(action)) {
+                performEditorAction(EditorInfo.IME_ACTION_SEND);
+            }
+        }
 
-            if (intent.getAction().equals(IME_ACTION_SEND)) {
-                InputConnection ic = getCurrentInputConnection();
-                if (ic != null) {
-                    ic.performEditorAction(EditorInfo.IME_ACTION_SEND);
-                }
+        private void performEditorAction(int action) {
+            InputConnection ic = getCurrentInputConnection();
+            if (ic != null) {
+                ic.performEditorAction(action);
             }
         }
     }
