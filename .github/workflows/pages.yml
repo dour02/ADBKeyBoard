@@ -1,0 +1,89 @@
+
+name: Deploy Source to Cloudflare Pages
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate directory index
+        run: |
+          python3 - <<'PY'
+          import os
+          import html
+          from pathlib import Path
+
+          root = Path(".")
+          ignored = {".git", ".github"}
+
+          def generate(directory):
+              entries = sorted(
+                  directory.iterdir(),
+                  key=lambda p: (not p.is_dir(), p.name.lower())
+              )
+
+              rows = []
+              if directory != root:
+                  rows.append('<li><a href="../">../</a></li>')
+
+              for p in entries:
+                  if p.name in ignored:
+                      continue
+
+                  name = html.escape(p.name)
+                  href = html.escape(
+                      p.name + ("/" if p.is_dir() else ""),
+                      quote=True
+                  )
+
+                  if p.is_dir():
+                      rows.append(
+                          f'<li>📁 <a href="{href}">{name}/</a></li>'
+                      )
+                      generate(p)
+                  elif p.name != "index.html":
+                      rows.append(
+                          f'<li>📄 <a href="{href}">{name}</a></li>'
+                      )
+
+              page = f"""<!DOCTYPE html>
+          <html lang="en">
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width">
+          <title>Source: {html.escape(str(directory))}</title>
+          <style>
+          body{{font:15px monospace;max-width:1000px;margin:35px auto;padding:0 18px}}
+          a{{text-decoration:none;color:#1670b8}}
+          a:hover{{text-decoration:underline}}
+          li{{padding:5px}}
+          </style>
+          <h2>Source: /{html.escape(str(directory))}</h2>
+          <ul>{''.join(rows)}</ul>
+          </html>"""
+
+              (directory / "index.html").write_text(
+                  page, encoding="utf-8"
+              )
+
+          generate(root)
+          PY
+
+      - name: Deploy
+        run: |
+          npx wrangler@latest pages deploy . \
+            --project-name=adbkeyboard \
+            --branch=main
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
