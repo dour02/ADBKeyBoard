@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Gesture injection and Toast logging are retained. Window text is read only
-     when ADB_SELECT_ALL_COPY is explicitly requested by adb/root. -->
+<!--
+    Gestures require canPerformGestures=true.
+    ADB_SELECT_ALL_COPY calls getRootInActiveWindow() and traverses the
+    active window's AccessibilityNodeInfo tree, so window-content retrieval
+    must also be enabled.
+-->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/touch_service_description"
     android:accessibilityEventTypes="typeWindowStateChanged|typeNotificationStateChanged"
@@ -8,4 +12,4 @@
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="true"
     android:notificationTimeout="100"
-    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows" />
+    android:accessibilityFlags="flagDefault" />
